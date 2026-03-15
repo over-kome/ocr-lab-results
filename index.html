@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OCR - Resultados de Exames</title>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #f5f5f5;
+    padding: 16px;
+    max-width: 800px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 1.3rem; margin-bottom: 4px; color: #333; }
+  .subtitle { font-size: 0.85rem; color: #888; margin-bottom: 16px; }
+
+  .upload-area {
+    border: 3px dashed #4CAF50;
+    border-radius: 12px;
+    padding: 32px 16px;
+    text-align: center;
+    cursor: pointer;
+    background: #fff;
+    margin-bottom: 16px;
+    transition: background 0.2s;
+  }
+  .upload-area:hover, .upload-area.dragover { background: #e8f5e9; }
+  .upload-area p { font-size: 1.1rem; color: #555; }
+  .upload-area .icon { font-size: 2.5rem; margin-bottom: 8px; }
+  .upload-area small { color: #999; }
+  input[type="file"] { display: none; }
+
+  .thumbnails {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .thumb {
+    width: 60px; height: 60px;
+    border-radius: 6px;
+    object-fit: cover;
+    border: 2px solid #ddd;
+  }
+  .thumb.done { border-color: #4CAF50; }
+  .thumb.processing { border-color: #FF9800; animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+  .progress-container { margin-bottom: 16px; display: none; }
+  .progress-bar {
+    height: 28px;
+    background: #e0e0e0;
+    border-radius: 14px;
+    overflow: hidden;
+    margin-bottom: 6px;
+  }
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #4CAF50, #66BB6A);
+    border-radius: 14px;
+    transition: width 0.3s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 0.85rem;
+    font-weight: 600;
+    min-width: 40px;
+  }
+  .progress-status { font-size: 0.9rem; color: #666; }
+
+  .actions { margin-bottom: 16px; display: none; gap: 8px; flex-wrap: wrap; }
+  .btn {
+    padding: 14px 24px;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.2s;
+    flex: 1;
+    min-width: 120px;
+  }
+  .btn:hover { opacity: 0.85; }
+  .btn:active { transform: scale(0.97); }
+  .btn-copy { background: #4CAF50; color: #fff; }
+  .btn-copy.copied { background: #388E3C; }
+  .btn-clip { background: #2196F3; color: #fff; font-size: 0.9rem; }
+  .btn-clear { background: #eee; color: #666; }
+
+  .result-box {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 16px;
+    white-space: pre-wrap;
+    font-family: 'Courier New', monospace;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    max-height: 50vh;
+    overflow-y: auto;
+    display: none;
+    word-break: break-word;
+  }
+
+  .tip {
+    background: #E3F2FD;
+    border-radius: 8px;
+    padding: 12px;
+    font-size: 0.85rem;
+    color: #1565C0;
+    margin-top: 16px;
+    display: none;
+  }
+
+  @media (max-width: 500px) {
+    .btn { padding: 12px 16px; font-size: 0.9rem; }
+  }
+</style>
+</head>
+<body>
+
+<h1>OCR - Resultados de Exames</h1>
+<p class="subtitle">Selecione as fotos dos exames para transcrever</p>
+
+<div class="upload-area" id="uploadArea">
+  <div class="icon">&#128247;</div>
+  <p>Toque para selecionar fotos</p>
+  <small>ou arraste aqui &bull; aceita varias de uma vez</small>
+</div>
+<input type="file" id="fileInput" accept="image/*" multiple>
+
+<div class="thumbnails" id="thumbnails"></div>
+
+<div class="progress-container" id="progressContainer">
+  <div class="progress-bar">
+    <div class="progress-fill" id="progressFill" style="width: 0%">0%</div>
+  </div>
+  <div class="progress-status" id="progressStatus">Preparando...</div>
+</div>
+
+<div class="actions" id="actions">
+  <button class="btn btn-copy" id="copyBtn">&#128203; Copiar Tudo</button>
+  <button class="btn btn-clip" id="clipBtn">&#128279; Abrir cl1p.net</button>
+  <button class="btn btn-clear" id="clearBtn">Limpar</button>
+</div>
+
+<div class="result-box" id="resultBox"></div>
+
+<div class="tip" id="tip">
+  <strong>Fluxo rapido:</strong> Copiar Tudo &rarr; Abrir cl1p.net &rarr; Colar &rarr; No PC do trabalho, abrir o mesmo link e copiar para o prontuario.
+</div>
+
+<script>
+const uploadArea = document.getElementById('uploadArea');
+const fileInput = document.getElementById('fileInput');
+const thumbnails = document.getElementById('thumbnails');
+const progressContainer = document.getElementById('progressContainer');
+const progressFill = document.getElementById('progressFill');
+const progressStatus = document.getElementById('progressStatus');
+const actions = document.getElementById('actions');
+const copyBtn = document.getElementById('copyBtn');
+const clipBtn = document.getElementById('clipBtn');
+const clearBtn = document.getElementById('clearBtn');
+const resultBox = document.getElementById('resultBox');
+const tip = document.getElementById('tip');
+
+uploadArea.addEventListener('click', () => fileInput.click());
+
+uploadArea.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  uploadArea.classList.add('dragover');
+});
+uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
+uploadArea.addEventListener('drop', (e) => {
+  e.preventDefault();
+  uploadArea.classList.remove('dragover');
+  if (e.dataTransfer.files.length) processFiles(e.dataTransfer.files);
+});
+
+fileInput.addEventListener('change', () => {
+  if (fileInput.files.length) processFiles(fileInput.files);
+});
+
+function showThumbnails(files) {
+  thumbnails.innerHTML = '';
+  for (let i = 0; i < files.length; i++) {
+    const img = document.createElement('img');
+    img.classList.add('thumb');
+    img.src = URL.createObjectURL(files[i]);
+    img.dataset.index = i;
+    thumbnails.appendChild(img);
+  }
+}
+
+async function processFiles(files) {
+  const images = Array.from(files).filter(f => f.type.startsWith('image/'));
+  if (!images.length) return;
+
+  images.sort((a, b) => a.name.localeCompare(b.name));
+
+  showThumbnails(images);
+  progressContainer.style.display = 'block';
+  actions.style.display = 'none';
+  resultBox.style.display = 'none';
+  resultBox.textContent = '';
+  tip.style.display = 'none';
+  uploadArea.style.display = 'none';
+
+  const total = images.length;
+  let allText = [];
+
+  for (let i = 0; i < total; i++) {
+    const thumbEl = thumbnails.querySelector(`[data-index="${i}"]`);
+    if (thumbEl) thumbEl.classList.add('processing');
+
+    const pct = Math.round((i / total) * 100);
+    progressFill.style.width = pct + '%';
+    progressFill.textContent = pct + '%';
+    progressStatus.textContent = 'Processando imagem ' + (i + 1) + ' de ' + total + '...';
+
+    try {
+      const result = await Tesseract.recognize(images[i], 'por', {
+        logger: (m) => {
+          if (m.status === 'recognizing text') {
+            const subPct = Math.round(((i + m.progress) / total) * 100);
+            progressFill.style.width = subPct + '%';
+            progressFill.textContent = subPct + '%';
+          }
+        }
+      });
+      const text = result.data.text.trim();
+      if (text) {
+        allText.push({ name: images[i].name, text: text });
+      }
+    } catch (err) {
+      allText.push({ name: images[i].name, text: 'ERRO: ' + err.message });
+    }
+
+    if (thumbEl) {
+      thumbEl.classList.remove('processing');
+      thumbEl.classList.add('done');
+    }
+  }
+
+  progressFill.style.width = '100%';
+  progressFill.textContent = '100%';
+  progressStatus.textContent = 'Pronto! ' + total + ' imagem(ns) processada(s).';
+
+  const textParts = allText.map(function(item, idx) {
+    return '=== Imagem ' + (idx + 1) + ': ' + item.name + ' ===\n' + item.text;
+  });
+
+  resultBox.textContent = textParts.join('\n\n');
+  resultBox.style.display = 'block';
+  actions.style.display = 'flex';
+  tip.style.display = 'block';
+}
+
+copyBtn.addEventListener('click', async function() {
+  var text = resultBox.textContent;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch(e) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  }
+  copyBtn.innerHTML = '&#10003; Copiado!';
+  copyBtn.classList.add('copied');
+  setTimeout(function() {
+    copyBtn.innerHTML = '&#128203; Copiar Tudo';
+    copyBtn.classList.remove('copied');
+  }, 2500);
+});
+
+clipBtn.addEventListener('click', function() {
+  var id = 'lab' + Math.random().toString(36).substring(2, 8);
+  var url = 'https://cl1p.net/' + id;
+  clipBtn.innerHTML = '&#128279; ' + url.replace('https://','');
+  window.open(url, '_blank');
+});
+
+clearBtn.addEventListener('click', function() {
+  resultBox.textContent = '';
+  resultBox.style.display = 'none';
+  actions.style.display = 'none';
+  progressContainer.style.display = 'none';
+  thumbnails.innerHTML = '';
+  tip.style.display = 'none';
+  uploadArea.style.display = 'block';
+  fileInput.value = '';
+});
+</script>
+</body>
+</html>
